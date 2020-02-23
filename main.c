@@ -1,7 +1,7 @@
 
 #include "driverlib.h"
 
-#define PERIOD_TICKS 16000 // 1600 ticks for a 16MHz DCO clock should give us a 1ms tick
+#define PERIOD_TICKS 1600 // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
 
 //-----------------------------------------------------------------------------
 
@@ -97,7 +97,7 @@ void Init_GPIO()
 void Init_Clock()
 {
     // Set DCO frequency to 16 MHz
-    CS_setDCOFreq(CS_DCORSEL_0, CS_DCOFSEL_4);
+    CS_setDCOFreq(CS_DCORSEL_1, CS_DCOFSEL_4);
     //Set external clock frequency to 32.768 KHz
     CS_setExternalClockSource(32768, 0);
     //Set ACLK=LFXT
