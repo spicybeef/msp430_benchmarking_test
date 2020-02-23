@@ -1,14 +1,22 @@
 
+//-----------------------------------------------------------------------------
+// Includes
+
 #include "driverlib.h"
+
+//-----------------------------------------------------------------------------
+// Defines
 
 #define PERIOD_TICKS 1600 // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
 
 //-----------------------------------------------------------------------------
+// Globals
 
 uint64_t systemTicks100Microseconds;
 Calendar calendar;                                // Calendar used for RTC
 
 //-----------------------------------------------------------------------------
+// Function prototypes
 
 void Init_GPIO(void);
 void Init_Clock(void);
@@ -18,6 +26,8 @@ void Init_Timer(void);
 void enterLPM35();
 
 //-----------------------------------------------------------------------------
+// Functions
+
 int _system_pre_init(void)
 {
     // Stop Watchdog timer
@@ -25,22 +35,23 @@ int _system_pre_init(void)
 
     systemTicks100Microseconds = 0;
 
-    /*==================================*/
-    /* Choose if segment initialization */
-    /* should be done or not. */
-    /* Return: 0 to omit initialization */
-    /* 1 to run initialization */
-    /*==================================*/
+    // Choose if segment (BSS) initialization should be performed or not.
+    // Return: 0 to omit initialization 1 to run initialization
     return 1;
 }
 
-void main (void)
+void main(void)
 {
+    // Peripheral initialization
     Init_GPIO();
     Init_Clock();
     Init_UART();
     Init_Timer();
 
+    // Enable global interrupts
+    __enable_interrupt();
+
+    // Main loop
     for(;;)
     {
         __bis_SR_register(LPM3_bits | GIE);// Enter LPM3
@@ -128,19 +139,14 @@ void Init_UART()
     param.overSampling = EUSCI_A_UART_OVERSAMPLING_BAUDRATE_GENERATION;
 
     if(STATUS_FAIL == EUSCI_A_UART_init(EUSCI_A0_BASE, &param))
+    {
         return;
+    }
 
     EUSCI_A_UART_enable(EUSCI_A0_BASE);
-
-    EUSCI_A_UART_clearInterrupt(EUSCI_A0_BASE,
-                                EUSCI_A_UART_RECEIVE_INTERRUPT);
-
+    EUSCI_A_UART_clearInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
     // Enable USCI_A0 RX interrupt
-    EUSCI_A_UART_enableInterrupt(EUSCI_A0_BASE,
-                                 EUSCI_A_UART_RECEIVE_INTERRUPT); // Enable interrupt
-
-    // Enable globale interrupt
-    __enable_interrupt();
+    EUSCI_A_UART_enableInterrupt(EUSCI_A0_BASE, EUSCI_A_UART_RECEIVE_INTERRUPT);
 }
 
 /*
@@ -158,21 +164,10 @@ void Init_RTC()
     calendar.Year       = 0x2014;
 
     // Initialize RTC with the specified Calendar above
-    RTC_C_initCalendar(RTC_C_BASE,
-                       &calendar,
-                       RTC_C_FORMAT_BCD);
-
-    RTC_C_setCalendarEvent(RTC_C_BASE,
-                           RTC_C_CALENDAREVENT_MINUTECHANGE
-                           );
-
-    RTC_C_clearInterrupt(RTC_C_BASE,
-                         RTC_C_TIME_EVENT_INTERRUPT
-                         );
-
-    RTC_C_enableInterrupt(RTC_C_BASE,
-                          RTC_C_TIME_EVENT_INTERRUPT
-                          );
+    RTC_C_initCalendar(RTC_C_BASE, &calendar, RTC_C_FORMAT_BCD);
+    RTC_C_setCalendarEvent(RTC_C_BASE, RTC_C_CALENDAREVENT_MINUTECHANGE);
+    RTC_C_clearInterrupt(RTC_C_BASE, RTC_C_TIME_EVENT_INTERRUPT);
+    RTC_C_enableInterrupt(RTC_C_BASE, RTC_C_TIME_EVENT_INTERRUPT);
 
     //Start RTC Clock
     RTC_C_startClock(RTC_C_BASE);
@@ -220,11 +215,14 @@ void enterLPM35()
     __no_operation();
 }
 
+//-----------------------------------------------------------------------------
+// ISRs
+
 /*
  * Timer0_A3 Interrupt Vector (TAIV) handler
  *
  */
-#pragma vector=TIMER0_A0_VECTOR
+#pragma vector = TIMER0_A0_VECTOR
 __interrupt void TIMER0_A0_ISR(void)
 {
     uint16_t currentTimerValue;
@@ -243,7 +241,7 @@ __interrupt void TIMER0_A0_ISR(void)
  * RTC_C Interrupt Vector handler
  *
  */
-#pragma vector=RTC_VECTOR
+#pragma vector = RTC_VECTOR
 __interrupt void RTC_ISR(void)
 {
     switch(__even_in_range(RTCIV, 16))
