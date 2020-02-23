@@ -1,8 +1,11 @@
 
 #include "driverlib.h"
 
+#define PERIOD_TICKS 16000 // 1600 ticks for a 16MHz DCO clock should give us a 1ms tick
+
 //-----------------------------------------------------------------------------
 
+uint64_t systemTicks100Microseconds;
 Calendar calendar;                                // Calendar used for RTC
 
 //-----------------------------------------------------------------------------
@@ -11,6 +14,7 @@ void Init_GPIO(void);
 void Init_Clock(void);
 void Init_UART(void);
 void Init_RTC(void);
+void Init_Timer(void);
 void enterLPM35();
 
 //-----------------------------------------------------------------------------
@@ -18,6 +22,8 @@ int _system_pre_init(void)
 {
     // Stop Watchdog timer
     WDT_A_hold(__MSP430_BASEADDRESS_WDT_A__);     // Stop WDT
+
+    systemTicks100Microseconds = 0;
 
     /*==================================*/
     /* Choose if segment initialization */
@@ -33,9 +39,13 @@ void main (void)
     Init_GPIO();
     Init_Clock();
     Init_UART();
+    Init_Timer();
 
-    __bis_SR_register(LPM3_bits | GIE);       // Enter LPM3 and wait for PC commands
-    __no_operation();
+    for(;;)
+    {
+        __bis_SR_register(LPM3_bits | GIE);// Enter LPM3
+        __no_operation();
+    }
 }
 
 /*
@@ -53,7 +63,7 @@ void Init_GPIO()
     GPIO_setOutputLowOnPin(GPIO_PORT_P7, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6|GPIO_PIN7);
     GPIO_setOutputLowOnPin(GPIO_PORT_P8, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6|GPIO_PIN7);
     GPIO_setOutputLowOnPin(GPIO_PORT_PJ, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6|GPIO_PIN7|GPIO_PIN8|GPIO_PIN9|GPIO_PIN10|GPIO_PIN11|GPIO_PIN12|GPIO_PIN13|GPIO_PIN14|GPIO_PIN15);
-    GPIO_setOutputHighOnPin(GPIO_PORT_P4, GPIO_PIN0);
+    GPIO_setOutputHighOnPin(GPIO_PORT_P4, GPIO_PIN0); // SD CS
 
     GPIO_setAsOutputPin(GPIO_PORT_P1, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6|GPIO_PIN7);
     GPIO_setAsOutputPin(GPIO_PORT_P2, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6|GPIO_PIN7);
@@ -71,11 +81,10 @@ void Init_GPIO()
     GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P2, GPIO_PIN1, GPIO_SECONDARY_MODULE_FUNCTION);
 
     // Set PJ.4 and PJ.5 as Primary Module Function Input, LFXT.
-    GPIO_setAsPeripheralModuleFunctionInputPin(
-           GPIO_PORT_PJ,
-           GPIO_PIN4 + GPIO_PIN5,
-           GPIO_PRIMARY_MODULE_FUNCTION
-           );
+    GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_PJ, GPIO_PIN4 + GPIO_PIN5, GPIO_PRIMARY_MODULE_FUNCTION);
+
+    // P1.0 and P1.1 are the LEDs
+    GPIO_setOutputHighOnPin(GPIO_PORT_P1, GPIO_PIN0|GPIO_PIN1);
 
     // Disable the GPIO power-on default high-impedance mode
     // to activate previously configured port settings
@@ -87,8 +96,8 @@ void Init_GPIO()
  */
 void Init_Clock()
 {
-    // Set DCO frequency to 8 MHz
-    CS_setDCOFreq(CS_DCORSEL_0, CS_DCOFSEL_6);
+    // Set DCO frequency to 16 MHz
+    CS_setDCOFreq(CS_DCORSEL_0, CS_DCOFSEL_4);
     //Set external clock frequency to 32.768 KHz
     CS_setExternalClockSource(32768, 0);
     //Set ACLK=LFXT
@@ -170,6 +179,28 @@ void Init_RTC()
 }
 
 /*
+ * Setup 1us tick timer
+ */
+void Init_Timer(void)
+{
+    // Start timer
+    Timer_A_initUpModeParam param = {0};
+    param.clockSource = TIMER_A_CLOCKSOURCE_SMCLK; // Use SMCLK (=DCO @ 16 MHz)
+    param.clockSourceDivider = TIMER_A_CLOCKSOURCE_DIVIDER_1;
+    param.timerPeriod = PERIOD_TICKS;
+    param.timerInterruptEnable_TAIE = TIMER_A_TAIE_INTERRUPT_DISABLE;
+    param.captureCompareInterruptEnable_CCR0_CCIE = TIMER_A_CCIE_CCR0_INTERRUPT_ENABLE;
+    param.timerClear = TIMER_A_DO_CLEAR;
+    param.startTimer = true;
+    Timer_A_initUpMode(TIMER_A0_BASE, &param);
+
+    __bis_SR_register(LPM3_bits | GIE);       // Enter LPM3. Delay for Ref to settle.
+
+    // Change timer delay to 1us
+    Timer_A_setCompareValue(TIMER_A0_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0, 1);
+}
+
+/*
  * Enter Low Power Mode 3.5
  */
 void enterLPM35()
@@ -187,4 +218,51 @@ void enterLPM35()
     //Enter LPM3 mode with interrupts enabled
     __bis_SR_register(LPM4_bits + GIE);
     __no_operation();
+}
+
+/*
+ * Timer0_A3 Interrupt Vector (TAIV) handler
+ *
+ */
+#pragma vector=TIMER0_A0_VECTOR
+__interrupt void TIMER0_A0_ISR(void)
+{
+    uint16_t currentTimerValue;
+
+    // Add our desired period ticks
+    currentTimerValue = Timer_A_getCaptureCompareCount(TIMER_A1_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0) + PERIOD_TICKS;
+    // Update compare value
+    Timer_A_setCompareValue(TIMER_A1_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0, currentTimerValue);
+    // Toggle LED
+    GPIO_toggleOutputOnPin(GPIO_PORT_P1, GPIO_PIN0|GPIO_PIN1);
+    // Update our system tick
+    systemTicks100Microseconds++;
+}
+
+/*
+ * RTC_C Interrupt Vector handler
+ *
+ */
+#pragma vector=RTC_VECTOR
+__interrupt void RTC_ISR(void)
+{
+    switch(__even_in_range(RTCIV, 16))
+    {
+        case RTCIV_NONE:
+            break;
+        case RTCIV_RTCOFIFG:
+            break;
+        case RTCIV_RTCRDYIFG:
+            break;
+        case RTCIV_RTCTEVIFG:
+            break;
+        case RTCIV_RTCAIFG:
+            break;
+        case RTCIV_RT0PSIFG:
+            break;
+        case RTCIV_RT1PSIFG:
+            break;
+        default:
+            break;
+    }
 }
