@@ -7,8 +7,8 @@
 //-----------------------------------------------------------------------------
 // Defines
 
-#define PERIOD_TICKS 0xFFFF // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
-#define ENCRYPTION_DATA_SIZE (1024) // Size of data to be encrypted/decrypted (must be multiple of 16)
+#define PERIOD_TICKS 1600 // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
+#define ENCRYPTION_DATA_SIZE (512) // Size of data to be encrypted/decrypted (must be multiple of 16)
 
 //-----------------------------------------------------------------------------
 // Globals
@@ -236,9 +236,6 @@ void Init_Timer(void)
     Timer_A_initUpMode(TIMER_A0_BASE, &param);
 
     __delay_cycles(10000); // Delay wait for clock to settle
-
-    // Change timer delay to 1us
-    Timer_A_setCompareValue(TIMER_A0_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0, 1);
 }
 
 /**
@@ -272,6 +269,8 @@ __interrupt void TIMER0_A0_ISR(void)
     GPIO_toggleOutputOnPin(GPIO_PORT_P1, GPIO_PIN0|GPIO_PIN1);
     // Update our system tick
     systemTicks100Microseconds++;
+
+    __no_operation();
 }
 
 /*
