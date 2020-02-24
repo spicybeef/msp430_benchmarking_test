@@ -7,7 +7,7 @@
 //-----------------------------------------------------------------------------
 // Defines
 
-#define PERIOD_TICKS 1600 // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
+#define PERIOD_TICKS (1600) // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
 #define ENCRYPTION_DATA_SIZE (512) // Size of data to be encrypted/decrypted (must be multiple of 16)
 
 //-----------------------------------------------------------------------------
@@ -63,14 +63,16 @@ int _system_pre_init(void)
     return 1;
 }
 
-unsigned int i;
 void main(void)
 {
+    uint16_t i;
+
     // Zero out ticks
     startTimeSysTicks = 0;
     endTimeSysTicks = 0;
     totalTicks = 0;
 
+    // Copy the string we want to encrypt to our buffer
     const char stringToEncrypt[] = "I am a meat popsicle.           ";
     memcpy(message, stringToEncrypt, sizeof(stringToEncrypt));
 
