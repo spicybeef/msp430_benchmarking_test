@@ -7,13 +7,32 @@
 //-----------------------------------------------------------------------------
 // Defines
 
-#define PERIOD_TICKS 1600 // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
+#define PERIOD_TICKS 0xFFFF // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
+#define ENCRYPTION_DATA_SIZE (1024) // Size of data to be encrypted/decrypted (must be multiple of 16)
 
 //-----------------------------------------------------------------------------
 // Globals
 
-uint64_t systemTicks100Microseconds;
-Calendar calendar;                                // Calendar used for RTC
+uint64_t systemTicks100Microseconds; // System uptime tick, 100us per tick
+Calendar calendar; // Calendar used for RTC
+// These are kept in global scope so the compiler doesn't optimize them
+uint64_t startTimeSysTicks;
+uint64_t endTimeSysTicks;
+uint64_t totalTicks;
+uint8_t dataAESencrypted[ENCRYPTION_DATA_SIZE]; // Encrypted data
+uint8_t dataAESdecrypted[ENCRYPTION_DATA_SIZE]; // Decrypted data
+uint8_t cipherKey[32] =
+{
+    0xDE, 0xAD, 0xBE, 0xEF,
+    0xBA, 0xDC, 0x0F, 0xEE,
+    0xFE, 0xED, 0xBE, 0xEF,
+    0xBE, 0xEF, 0xBA, 0xBE,
+    0xBA, 0xDF, 0x00, 0x0D,
+    0xFE, 0xED, 0xC0, 0xDE,
+    0xD0, 0xD0, 0xCA, 0xCA,
+    0xCA, 0xFE, 0xBA, 0xBE,
+};
+char message[ENCRYPTION_DATA_SIZE] = {0};
 
 //-----------------------------------------------------------------------------
 // Function prototypes
@@ -23,6 +42,7 @@ void Init_Clock(void);
 void Init_UART(void);
 void Init_RTC(void);
 void Init_Timer(void);
+void Init_AES(uint8_t * cypherKey);
 void enterLPM35();
 
 //-----------------------------------------------------------------------------
@@ -33,6 +53,9 @@ int _system_pre_init(void)
     // Stop Watchdog timer
     WDT_A_hold(__MSP430_BASEADDRESS_WDT_A__);     // Stop WDT
 
+    // Disable global interrupts
+    __disable_interrupt();
+
     systemTicks100Microseconds = 0;
 
     // Choose if segment (BSS) initialization should be performed or not.
@@ -40,21 +63,44 @@ int _system_pre_init(void)
     return 1;
 }
 
+unsigned int i;
 void main(void)
 {
+    // Zero out ticks
+    startTimeSysTicks = 0;
+    endTimeSysTicks = 0;
+    totalTicks = 0;
+
+    const char stringToEncrypt[] = "I am a meat popsicle.           ";
+    memcpy(message, stringToEncrypt, sizeof(stringToEncrypt));
+
     // Peripheral initialization
     Init_GPIO();
     Init_Clock();
     Init_UART();
     Init_Timer();
+    Init_AES(cipherKey);
 
     // Enable global interrupts
     __enable_interrupt();
 
-    // Main loop
-    for(;;)
+    // Get start time
+    startTimeSysTicks = systemTicks100Microseconds;
+    // Do stuff
+    for (i = 0; i < ENCRYPTION_DATA_SIZE; i += 16)
     {
-        __bis_SR_register(LPM3_bits | GIE);// Enter LPM3
+        // Encrypt data with preloaded cipher key
+         AES256_encryptData(AES256_BASE, (uint8_t*)(message) + i, dataAESencrypted + i);
+    }
+    // Get end time
+    endTimeSysTicks = systemTicks100Microseconds;
+
+    // Figure out how long it took to do our thing
+    totalTicks = endTimeSysTicks - startTimeSysTicks;
+
+    // Main loop
+    for (;;)
+    {
         __no_operation();
     }
 }
@@ -174,7 +220,7 @@ void Init_RTC()
 }
 
 /*
- * Setup 1us tick timer
+ * Setup 100us tick timer
  */
 void Init_Timer(void)
 {
@@ -189,30 +235,21 @@ void Init_Timer(void)
     param.startTimer = true;
     Timer_A_initUpMode(TIMER_A0_BASE, &param);
 
-    __bis_SR_register(LPM3_bits | GIE);       // Enter LPM3. Delay for Ref to settle.
+    __delay_cycles(10000); // Delay wait for clock to settle
 
     // Change timer delay to 1us
     Timer_A_setCompareValue(TIMER_A0_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0, 1);
 }
 
-/*
- * Enter Low Power Mode 3.5
+/**
+ * @brief      Setup the AES peripheral
+ *
+ * @param      cypherKey  The 32 byte cypher key to use for AES encryption/decrytion
  */
-void enterLPM35()
+void Init_AES(uint8_t * cypherKey)
 {
-    // Configure button S2 (P5.5) interrupt
-    GPIO_selectInterruptEdge(GPIO_PORT_P5, GPIO_PIN5, GPIO_HIGH_TO_LOW_TRANSITION);
-    GPIO_setAsInputPinWithPullUpResistor(GPIO_PORT_P5, GPIO_PIN5);
-    GPIO_clearInterrupt(GPIO_PORT_P5, GPIO_PIN5);
-    GPIO_enableInterrupt(GPIO_PORT_P5, GPIO_PIN5);
-
-    // Request the disabling of the core voltage regulator when device enters
-    // LPM3 (or LPM4) so that we can effectively enter LPM3.5 (or LPM4.5).
-    PMM_turnOffRegulator();
-
-    //Enter LPM3 mode with interrupts enabled
-    __bis_SR_register(LPM4_bits + GIE);
-    __no_operation();
+    // Load a cipher key to module
+    AES256_setCipherKey(AES256_BASE, cypherKey, AES256_KEYLENGTH_256BIT);
 }
 
 //-----------------------------------------------------------------------------
