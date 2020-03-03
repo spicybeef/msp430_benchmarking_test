@@ -9,8 +9,9 @@
 //-----------------------------------------------------------------------------
 // Defines
 
-#define PERIOD_TICKS (1600) // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
-#define ENCRYPTION_DATA_SIZE (512) // Size of data to be encrypted/decrypted (must be multiple of 16)
+#define TIMER_PERIOD_TICKS (1600) // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
+#define AES_ENCRYPTION_DATA_SIZE (512) // Size of data to be encrypted/decrypted (must be multiple of 16)
+#define FFT_SAMPLES (512)
 
 //-----------------------------------------------------------------------------
 // Globals
@@ -22,9 +23,9 @@ uint64_t startTimeSysTicks;
 uint64_t endTimeSysTicks;
 uint64_t totalAesTicks;
 uint64_t totalFftTicks;
-uint8_t dataAESencrypted[ENCRYPTION_DATA_SIZE]; // Encrypted data
-uint8_t dataAESdecrypted[ENCRYPTION_DATA_SIZE]; // Decrypted data
-char message[ENCRYPTION_DATA_SIZE] = {0};
+uint8_t dataAESencrypted[AES_ENCRYPTION_DATA_SIZE]; // Encrypted data
+uint8_t dataAESdecrypted[AES_ENCRYPTION_DATA_SIZE]; // Decrypted data
+char message[AES_ENCRYPTION_DATA_SIZE] = {0};
 
 // AES stuff
 #pragma PERSISTENT(cipherKey)
@@ -41,7 +42,6 @@ uint8_t cipherKey[32] =
 };
 
 // FFT stuff
-#define FFT_SAMPLES (512)
 DSPLIB_DATA(input, MSP_ALIGN_CMPLX_FFT_Q15(FFT_SAMPLES))
 _q15 input[FFT_SAMPLES*2];
 /* Input signal parameters */
@@ -157,10 +157,6 @@ void main(void)
     totalAesTicks = 0;
     totalFftTicks = 0;
 
-    // Copy the string we want to encrypt to our buffer
-    const char stringToEncrypt[] = "I am a meat popsicle.           ";
-    memcpy(message, stringToEncrypt, sizeof(stringToEncrypt));
-
     // Peripheral initialization
     Init_GPIO();
     Init_Clock();
@@ -172,10 +168,13 @@ void main(void)
     __enable_interrupt();
 
 #if AES_BENCHMARKS
+    // Copy the string we want to encrypt to our buffer
+    const char stringToEncrypt[] = "I am a meat popsicle.           ";
+    memcpy(message, stringToEncrypt, sizeof(stringToEncrypt));
     // Get start time
     startTimeSysTicks = systemTicks100Microseconds;
     // Do stuff
-    for (i = 0; i < ENCRYPTION_DATA_SIZE; i += 16)
+    for (i = 0; i < AES_ENCRYPTION_DATA_SIZE; i += 16)
     {
         // Encrypt data with preloaded cipher key
          AES256_encryptData(AES256_BASE, (uint8_t*)(message) + i, dataAESencrypted + i);
@@ -184,7 +183,7 @@ void main(void)
     endTimeSysTicks = systemTicks100Microseconds;
     // Figure out how long it took to do our thing
     totalAesTicks = endTimeSysTicks - startTimeSysTicks;
-    printf("Total time for AES: %llu us\n", totalAesTicks*100);
+    // printf("Total time for AES: %llu us\n", totalAesTicks*100);
 #endif // AES_BENCHMARKS
 
 #if FFT_BENCHMARKS
@@ -202,7 +201,7 @@ void main(void)
     endTimeSysTicks = systemTicks100Microseconds;
     // Figure out how long it took to do our thing
     totalFftTicks = endTimeSysTicks - startTimeSysTicks;
-    printf("Total time for FFT: %llu us\n", totalFftTicks*100);
+    // printf("Total time for FFT: %llu us\n", totalFftTicks*100);
 #endif // FFT_BENCHMARKS
 
     // Main loop
@@ -335,7 +334,7 @@ void Init_Timer(void)
     Timer_A_initUpModeParam param = {0};
     param.clockSource = TIMER_A_CLOCKSOURCE_SMCLK; // Use SMCLK (=DCO @ 16 MHz)
     param.clockSourceDivider = TIMER_A_CLOCKSOURCE_DIVIDER_1;
-    param.timerPeriod = PERIOD_TICKS;
+    param.timerPeriod = TIMER_PERIOD_TICKS;
     param.timerInterruptEnable_TAIE = TIMER_A_TAIE_INTERRUPT_DISABLE;
     param.captureCompareInterruptEnable_CCR0_CCIE = TIMER_A_CCIE_CCR0_INTERRUPT_ENABLE;
     param.timerClear = TIMER_A_DO_CLEAR;
@@ -369,7 +368,7 @@ __interrupt void TIMER0_A0_ISR(void)
     uint16_t currentTimerValue;
 
     // Add our desired period ticks
-    currentTimerValue = Timer_A_getCaptureCompareCount(TIMER_A1_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0) + PERIOD_TICKS;
+    currentTimerValue = Timer_A_getCaptureCompareCount(TIMER_A1_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0) + TIMER_PERIOD_TICKS;
     // Update compare value
     Timer_A_setCompareValue(TIMER_A1_BASE, TIMER_A_CAPTURECOMPARE_REGISTER_0, currentTimerValue);
     // Toggle LED
