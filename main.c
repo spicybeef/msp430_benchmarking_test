@@ -11,17 +11,17 @@
 
 #define TIMER_PERIOD_TICKS (1600) // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
 #define AES_ENCRYPTION_DATA_SIZE (16) // Size of data to be encrypted/decrypted (must be multiple of 16)
-#define FFT_SAMPLES (16) // (512)
-#define DMT_SIZE (512) // Size to transfer in bytes
+#define FFT_SAMPLES (512) // (512)
+#define DMT_SIZE (32) // Size to transfer in bytes
 
 //-----------------------------------------------------------------------------
 // Globals
 
-uint32_t systemTicks100Microseconds; // System uptime tick, 100us per tick
+volatile uint32_t systemTicks100Microseconds; // System uptime tick, 100us per tick
 Calendar calendar; // Calendar used for RTC
 // These are kept in global scope so the compiler doesn't optimize them
-uint64_t startTimeSysTicks;
-uint64_t endTimeSysTicks;
+volatile uint64_t startTimeSysTicks;
+volatile uint64_t endTimeSysTicks;
 uint64_t totalAesTicks;
 uint64_t totalFftTicks;
 uint64_t totalDmaTicks;
@@ -50,8 +50,7 @@ _q15 input[FFT_SAMPLES*2];
 #pragma PERSISTENT(inputVector)
 int32_t inputVector[FFT_SAMPLES] = {
 0x08f11159, 0x121ce61b, 0x173ff715, 0x163be513, 0x1f3307ca, 0xf5eb162e, 0x07be107c, 0xf852ea79,
-0x18b0001f, 0x09fe0215, 0xfa7a08c6, 0x10e3f37a, 0x095603dd, 0x1c98fe4c, 0xf5e8f08d, 0x01e6f133,};
-/**
+0x18b0001f, 0x09fe0215, 0xfa7a08c6, 0x10e3f37a, 0x095603dd, 0x1c98fe4c, 0xf5e8f08d, 0x01e6f133,
 0x174cfeda, 0xf5ee1403, 0xf916ee8d, 0xf6570c28, 0xe2581849, 0xe8c6ec42, 0x16baea16, 0xea35e118,
 0xe32def6b, 0xf832f434, 0xe7ad1da6, 0xe1850915, 0x0760f104, 0xe191fe1d, 0xef50fd49, 0xfc22e377,
 0xf77b069c, 0xf529f210, 0xfe39f091, 0x08d9eb7f, 0x17c0e090, 0x0aa5f1a0, 0x12b7ee7b, 0x1de5f4db,
@@ -115,13 +114,13 @@ int32_t inputVector[FFT_SAMPLES] = {
 0xf5221aab, 0xfe8bff89, 0x1646e46b, 0xeaa91a95, 0xfb1ce370, 0xf8dd086d, 0x024105ce, 0x0a74edd7,
 0x1425ffce, 0xf26c04ac, 0xff3ceb39, 0x02a7f8f9, 0xffcd1ad3, 0x0c52e346, 0xed6112bf, 0xed6b0b93,
 };
-**/
+
 msp_cmplx_fft_q15_params fftParams;
 
 // DMT stuff
 #pragma PERSISTENT(dmtNvsramBuff)
-uint8_t dmtNvsramBuff[DMT_SIZE];
-uint8_t dmtSramBuff[DMT_SIZE];
+uint8_t dmtNvsramBuff[DMT_SIZE] = {0};
+uint8_t dmtSramBuff[DMT_SIZE] = {0};
 
 //-----------------------------------------------------------------------------
 // Function prototypes
@@ -157,6 +156,16 @@ int _system_pre_init(void)
 #define FFT_BENCHMARKS 1
 #define DMA_BENCHMARKS 1
 
+void gpioTimingPinLow(void)
+{
+    GPIO_setOutputLowOnPin(GPIO_PORT_P8, GPIO_PIN1);
+}
+
+void gpioTimingPinHigh(void)
+{
+    GPIO_setOutputHighOnPin(GPIO_PORT_P8, GPIO_PIN1);
+}
+
 void main(void)
 {
     uint16_t i;
@@ -172,7 +181,7 @@ void main(void)
     Init_GPIO();
     Init_Clock();
     Init_UART();
-    Init_Timer();
+    // Init_Timer(); We'll use a GPIO for timing instead
     Init_AES(cipherKey);
 
     // Enable global interrupts
@@ -183,7 +192,7 @@ void main(void)
     const char stringToEncrypt[] = "I am a meat popsicle.           ";
     memcpy(message, stringToEncrypt, sizeof(stringToEncrypt));
     // Get start time
-    startTimeSysTicks = systemTicks100Microseconds;
+    // startTimeSysTicks = systemTicks100Microseconds;
     // Do stuff
     for (i = 0; i < AES_ENCRYPTION_DATA_SIZE; i += 16)
     {
@@ -191,9 +200,9 @@ void main(void)
          AES256_encryptData(AES256_BASE, (uint8_t*)(message) + i, dataAESencrypted + i);
     }
     // Get end time
-    endTimeSysTicks = systemTicks100Microseconds;
+    // endTimeSysTicks = systemTicks100Microseconds;
     // Figure out how long it took to do our thing
-    totalAesTicks = endTimeSysTicks - startTimeSysTicks;
+    // totalAesTicks = endTimeSysTicks - startTimeSysTicks;
     // printf("Total time for AES: %llu us\n", totalAesTicks*100);
 #endif // AES_BENCHMARKS
 
@@ -207,18 +216,20 @@ void main(void)
     // Get start time
     startTimeSysTicks = systemTicks100Microseconds;
     // Do stuff
+    gpioTimingPinLow();
     msp_cmplx_fft_fixed_q15(&fftParams, input);
+    gpioTimingPinHigh();
     // Get end time
-    endTimeSysTicks = systemTicks100Microseconds;
+    // endTimeSysTicks = systemTicks100Microseconds;
     // Figure out how long it took to do our thing
-    totalFftTicks = endTimeSysTicks - startTimeSysTicks;
+    // totalFftTicks = endTimeSysTicks - startTimeSysTicks;
     // printf("Total time for FFT: %llu us\n", totalFftTicks*100);
 #endif // FFT_BENCHMARKS
 
 #if DMA_BENCHMARKS
     DMA_initParam param = {0};
     param.channelSelect = DMA_CHANNEL_0;
-    param.transferModeSelect = DMA_TRANSFER_REPEATED_BLOCK;
+    param.transferModeSelect = DMA_TRANSFER_BLOCK;
     param.transferSize = DMT_SIZE;
     param.triggerSourceSelect = DMA_TRIGGERSOURCE_0;
     param.transferUnitSelect = DMA_SIZE_SRCWORD_DSTWORD;
@@ -228,24 +239,28 @@ void main(void)
     // Configure DMA channel 0
     // Use dmtNvsramBuff as source
     // Increment source address after every transfer
-    DMA_setSrcAddress(DMA_CHANNEL_0, (uint32_t)&dmtNvsramBuff, DMA_DIRECTION_INCREMENT);
+    DMA_setSrcAddress(DMA_CHANNEL_0, (uint32_t)dmtNvsramBuff, DMA_DIRECTION_INCREMENT);
     
     // Configure DMA channel 0
     // Use dmtSramBuff as destination
     // Increment destination address after every transfer
-    DMA_setDstAddress(DMA_CHANNEL_0, (uint32_t)&dmtSramBuff, DMA_DIRECTION_INCREMENT);
-    //Enable transfers on DMA channel 0
+    DMA_setDstAddress(DMA_CHANNEL_0, (uint32_t)dmtSramBuff, DMA_DIRECTION_INCREMENT);
+    // Enable transfers on DMA channel 0
     DMA_enableTransfers(DMA_CHANNEL_0);
 
     // Get start time
-    startTimeSysTicks = systemTicks100Microseconds;
+    // startTimeSysTicks = systemTicks100Microseconds;
     // Do stuff
-    //Start block tranfer on DMA channel 0
+    // Start block tranfer on DMA channel 0
+    gpioTimingPinLow();
     DMA_startTransfer(DMA_CHANNEL_0);
+    // Wait for transfer to complete (DMAEN de-assertion)
+    while(DMA_getInterruptStatus(DMA_CHANNEL_0) & 0x10);
+    gpioTimingPinHigh();
     // Get end time
-    endTimeSysTicks = systemTicks100Microseconds;
+    // endTimeSysTicks = systemTicks100Microseconds;
     // Figure out how long it took to do our thing
-    totalDmaTicks = endTimeSysTicks - startTimeSysTicks;
+    // totalDmaTicks = endTimeSysTicks - startTimeSysTicks;
     // printf("Total time for DMA: %llu us\n", totalDmaTicks*100);
 #endif // DMA_BENCHMARKS
 
@@ -293,6 +308,9 @@ void Init_GPIO()
 
     // P1.0 and P1.1 are the LEDs
     GPIO_setOutputHighOnPin(GPIO_PORT_P1, GPIO_PIN0|GPIO_PIN1);
+
+    // P8.1 is out timing pin
+    GPIO_setOutputHighOnPin(GPIO_PORT_P8, GPIO_PIN1);
 
     // Disable the GPIO power-on default high-impedance mode
     // to activate previously configured port settings
