@@ -10,8 +10,9 @@
 // Defines
 
 #define TIMER_PERIOD_TICKS (1600) // 1600 ticks for a 16MHz DCO clock should give us a 100us tick
-#define AES_ENCRYPTION_DATA_SIZE (512) // Size of data to be encrypted/decrypted (must be multiple of 16)
-#define FFT_SAMPLES (512)
+#define AES_ENCRYPTION_DATA_SIZE (16) // Size of data to be encrypted/decrypted (must be multiple of 16)
+#define FFT_SAMPLES (16) // (512)
+#define DMT_SIZE (512) // Size to transfer in bytes
 
 //-----------------------------------------------------------------------------
 // Globals
@@ -23,6 +24,7 @@ uint64_t startTimeSysTicks;
 uint64_t endTimeSysTicks;
 uint64_t totalAesTicks;
 uint64_t totalFftTicks;
+uint64_t totalDmaTicks;
 uint8_t dataAESencrypted[AES_ENCRYPTION_DATA_SIZE]; // Encrypted data
 uint8_t dataAESdecrypted[AES_ENCRYPTION_DATA_SIZE]; // Decrypted data
 char message[AES_ENCRYPTION_DATA_SIZE] = {0};
@@ -48,7 +50,8 @@ _q15 input[FFT_SAMPLES*2];
 #pragma PERSISTENT(inputVector)
 int32_t inputVector[FFT_SAMPLES] = {
 0x08f11159, 0x121ce61b, 0x173ff715, 0x163be513, 0x1f3307ca, 0xf5eb162e, 0x07be107c, 0xf852ea79,
-0x18b0001f, 0x09fe0215, 0xfa7a08c6, 0x10e3f37a, 0x095603dd, 0x1c98fe4c, 0xf5e8f08d, 0x01e6f133,
+0x18b0001f, 0x09fe0215, 0xfa7a08c6, 0x10e3f37a, 0x095603dd, 0x1c98fe4c, 0xf5e8f08d, 0x01e6f133,};
+/**
 0x174cfeda, 0xf5ee1403, 0xf916ee8d, 0xf6570c28, 0xe2581849, 0xe8c6ec42, 0x16baea16, 0xea35e118,
 0xe32def6b, 0xf832f434, 0xe7ad1da6, 0xe1850915, 0x0760f104, 0xe191fe1d, 0xef50fd49, 0xfc22e377,
 0xf77b069c, 0xf529f210, 0xfe39f091, 0x08d9eb7f, 0x17c0e090, 0x0aa5f1a0, 0x12b7ee7b, 0x1de5f4db,
@@ -112,7 +115,13 @@ int32_t inputVector[FFT_SAMPLES] = {
 0xf5221aab, 0xfe8bff89, 0x1646e46b, 0xeaa91a95, 0xfb1ce370, 0xf8dd086d, 0x024105ce, 0x0a74edd7,
 0x1425ffce, 0xf26c04ac, 0xff3ceb39, 0x02a7f8f9, 0xffcd1ad3, 0x0c52e346, 0xed6112bf, 0xed6b0b93,
 };
+**/
 msp_cmplx_fft_q15_params fftParams;
+
+// DMT stuff
+#pragma PERSISTENT(dmtNvsramBuff)
+uint8_t dmtNvsramBuff[DMT_SIZE];
+uint8_t dmtSramBuff[DMT_SIZE];
 
 //-----------------------------------------------------------------------------
 // Function prototypes
@@ -146,6 +155,7 @@ int _system_pre_init(void)
 
 #define AES_BENCHMARKS 1
 #define FFT_BENCHMARKS 1
+#define DMA_BENCHMARKS 1
 
 void main(void)
 {
@@ -156,6 +166,7 @@ void main(void)
     endTimeSysTicks = 0;
     totalAesTicks = 0;
     totalFftTicks = 0;
+    totalDmaTicks = 0;
 
     // Peripheral initialization
     Init_GPIO();
@@ -202,6 +213,40 @@ void main(void)
     // Figure out how long it took to do our thing
     totalFftTicks = endTimeSysTicks - startTimeSysTicks;
     // printf("Total time for FFT: %llu us\n", totalFftTicks*100);
+#endif // FFT_BENCHMARKS
+
+#if FFT_BENCHMARKS
+    DMA_initParam param = {0};
+    param.channelSelect = DMA_CHANNEL_0;
+    param.transferModeSelect = DMA_TRANSFER_REPEATED_BLOCK;
+    param.transferSize = DMT_SIZE;
+    param.triggerSourceSelect = DMA_TRIGGERSOURCE_0;
+    param.transferUnitSelect = DMA_SIZE_SRCWORD_DSTWORD;
+    param.triggerTypeSelect = DMA_TRIGGER_RISINGEDGE;
+    DMA_init(&param);
+
+    // Configure DMA channel 0
+    // Use dmtNvsramBuff as source
+    // Increment source address after every transfer
+    DMA_setSrcAddress(DMA_CHANNEL_0, (uint32_t)&dmtNvsramBuff, DMA_DIRECTION_INCREMENT);
+    
+    // Configure DMA channel 0
+    // Use dmtSramBuff as destination
+    // Increment destination address after every transfer
+    DMA_setDstAddress(DMA_CHANNEL_0, (uint32_t)&dmtSramBuff, DMA_DIRECTION_INCREMENT);
+    //Enable transfers on DMA channel 0
+    DMA_enableTransfers(DMA_CHANNEL_0);
+
+    // Get start time
+    startTimeSysTicks = systemTicks100Microseconds;
+    // Do stuff
+    //Start block tranfer on DMA channel 0
+    DMA_startTransfer(DMA_CHANNEL_0);
+    // Get end time
+    endTimeSysTicks = systemTicks100Microseconds;
+    // Figure out how long it took to do our thing
+    totalDmaTicks = endTimeSysTicks - startTimeSysTicks;
+    // printf("Total time for DMA: %llu us\n", totalDmaTicks*100);
 #endif // FFT_BENCHMARKS
 
     // Main loop
