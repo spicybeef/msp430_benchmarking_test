@@ -215,7 +215,7 @@ void main(void)
     // printf("Total time for FFT: %llu us\n", totalFftTicks*100);
 #endif // FFT_BENCHMARKS
 
-#if FFT_BENCHMARKS
+#if DMA_BENCHMARKS
     DMA_initParam param = {0};
     param.channelSelect = DMA_CHANNEL_0;
     param.transferModeSelect = DMA_TRANSFER_REPEATED_BLOCK;
@@ -247,7 +247,7 @@ void main(void)
     // Figure out how long it took to do our thing
     totalDmaTicks = endTimeSysTicks - startTimeSysTicks;
     // printf("Total time for DMA: %llu us\n", totalDmaTicks*100);
-#endif // FFT_BENCHMARKS
+#endif // DMA_BENCHMARKS
 
     // Main loop
     for (;;)
