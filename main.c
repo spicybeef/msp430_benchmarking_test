@@ -194,11 +194,13 @@ void main(void)
     // Get start time
     // startTimeSysTicks = systemTicks100Microseconds;
     // Do stuff
+    gpioTimingPinLow();
     for (i = 0; i < AES_ENCRYPTION_DATA_SIZE; i += 16)
     {
         // Encrypt data with preloaded cipher key
          AES256_encryptData(AES256_BASE, (uint8_t*)(message) + i, dataAESencrypted + i);
     }
+    gpioTimingPinHigh();
     // Get end time
     // endTimeSysTicks = systemTicks100Microseconds;
     // Figure out how long it took to do our thing
